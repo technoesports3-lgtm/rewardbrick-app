@@ -1,0 +1,37 @@
+name: rewardbrick_app
+description: "A highly secured CPA Reward Application."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  dio: ^5.4.0
+  google_fonts: ^6.1.0
+  flutter_secure_storage: ^9.0.0
+  animate_do: ^3.3.4
+  glassmorphism: ^3.0.0
+  shared_preferences: ^2.2.0
+  url_launcher: ^6.3.2
+  http: ^1.2.0
+  google_sign_in: ^6.2.1
+  firebase_core: ^3.15.2 
+  firebase_auth: ^5.1.0 
+  google_mobile_ads: ^9.1.0
+  webview_flutter: ^4.13.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/illustrations/team_earning.png
+    - assets/illustrations/rewardbrick_logo.png

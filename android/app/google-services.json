@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "17775189597",
+    "project_id": "rewardbrick-a882b",
+    "storage_bucket": "rewardbrick-a882b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:17775189597:android:209c0e28b17c35ec2e77b4",
+        "android_client_info": {
+          "package_name": "com.example.rewardbrick_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "17775189597-7ajab3cg2e67lvoc5g8nf3ouvenog05m.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.rewardbrick_app",
+            "certificate_hash": "b6431cab67fe728b43e1def4148b1c18c68f1343"
+          }
+        },
+        {
+          "client_id": "17775189597-3088jvkolffa4dp944q5jbcuj3e0kdk4.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDPc9CLaymlCjwlEiXNhF1AeGpjF1gT7R0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "17775189597-3088jvkolffa4dp944q5jbcuj3e0kdk4.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
