@@ -7,12 +7,12 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../models/leaderboard_entry.dart';
 import '../models/affiliate_post.dart';
 import '../models/dashboard_banner.dart';
 import '../models/redeem_card.dart';
 import '../services/ad_service.dart';
 import '../services/api_service.dart';
+import '../services/notification_service.dart';
 import '../theme_design_system.dart';
 import 'auth_screen.dart';
 import 'content_webview_screen.dart';
@@ -43,12 +43,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _referralCode = '';
   num _totalEarned = 0;
   num _offersCompleted = 0;
-  num _referralCount = 0;
+  num _totalRedeemed = 0;
   num _balance = 0;
   bool _loadingProfile = true;
   bool _dailyLoading = false;
-  bool _openingLeaderboard = false;
-  bool _loadingLeaderboard = true;
   bool _withdrawalLoading = false;
   bool _loadingWalletHistory = false;
   bool _loadingOffers = true;
@@ -57,12 +55,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<dynamic> _offers = [];
   List<dynamic> _withdrawalHistory = [];
   List<dynamic> _transactionHistory = [];
-  List<LeaderboardEntry> _leaderboard = const [];
   List<DashboardBanner> _dashboardBanners = const [];
   List<AffiliatePost> _affiliatePosts = const [];
   List<RedeemCard> _redeemCards = const [];
   bool _dashboardBannersLoaded = false;
-  String? _leaderboardError;
   String? _profileError;
   String? _offersError;
   String? _dashboardBannersError;
@@ -109,18 +105,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final userId = prefs.getString('user_id') ?? '';
     if (!mounted) return;
     setState(() => _userId = userId);
+    unawaited(NotificationService.initializeForUser(userId));
     if (userId.isEmpty) {
       setState(() {
         _loadingProfile = false;
         _loadingOffers = false;
-        _loadingLeaderboard = false;
       });
       return;
     }
     await Future.wait([
       _loadProfile(userId),
       _loadOffers(userId),
-      _loadLeaderboard(userId),
       _loadDashboardBanners(),
     ]);
   }
@@ -169,10 +164,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             user['completed_offers'] ??
             user['offers_tried'] ??
             stats['offers_completed']);
-        _referralCount = _numberValue(user['referral_count'] ??
-            user['referrals'] ??
-            user['total_referrals'] ??
-            stats['referrals']);
+        _totalRedeemed =
+            _numberValue(user['coins_redeemed'] ?? stats['coins_redeemed']);
         _loadingProfile = false;
         _profileError = null;
       });
@@ -406,34 +399,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Future<void> _loadLeaderboard([String? knownUserId]) async {
-    if (!mounted) return;
-    setState(() {
-      _loadingLeaderboard = true;
-      _leaderboardError = null;
-    });
-    try {
-      final userId = await _resolveUserId(knownUserId);
-      if (userId.isEmpty) {
-        throw const ApiRequestException('Sign in to view the leaderboard.');
-      }
-      final page = await _api.getLeaderboard(userId, limit: 4);
-      if (!mounted) return;
-      setState(() {
-        _leaderboard = page.entries;
-        _loadingLeaderboard = false;
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _leaderboardError = error is ApiRequestException
-            ? error.message
-            : 'Could not load the leaderboard. Please try again.';
-        _loadingLeaderboard = false;
-      });
-    }
-  }
-
   Future<void> _loadWalletHistory() async {
     final prefs = await SharedPreferences.getInstance();
     final userId = prefs.getString('user_id') ?? '';
@@ -463,6 +428,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _logout() async {
+    await NotificationService.logout();
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
     if (!mounted) return;
@@ -473,12 +439,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _openGatedContent(String title, String url,
-      {bool external = false}) async {
+      {bool external = false,
+      LaunchMode externalLaunchMode = LaunchMode.externalApplication}) async {
     if (_userId.isEmpty) return;
     _adService.showAdGate(context, () {
       if (!mounted) return;
       if (external) {
-        unawaited(_launchExternalOffer(url));
+        unawaited(_launchExternalOffer(url, mode: externalLaunchMode));
         return;
       }
       Navigator.push(
@@ -503,13 +470,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _openGatedContent(title, url);
   }
 
-  Future<void> _launchExternalOffer(String url) async {
+  Future<void> _launchExternalOffer(
+    String url, {
+    LaunchMode mode = LaunchMode.externalApplication,
+  }) async {
     final uri = _externalOfferUri(url);
-    if (uri == null) {
+    if (uri == null || !['https', 'market'].contains(uri.scheme)) {
       _showMessage('This offer link is invalid.');
       return;
     }
-    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    final opened = await launchUrl(uri, mode: mode);
     if (!opened && mounted) {
       _showMessage('Unable to open this offer on your device.');
     }
@@ -529,6 +499,52 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
     }
     return Uri.tryParse(url);
+  }
+
+  Future<void> _startOfferTask(Map<dynamic, dynamic> data) async {
+    final url =
+        (data['offer_link'] ?? data['link_url'] ?? data['target_link'] ?? '')
+            .toString()
+            .trim();
+    if (url.isEmpty) {
+      _showMessage('This offer is temporarily unavailable.');
+      return;
+    }
+
+    final uri = _externalOfferUri(url);
+    final openIn = (data['open_in'] ?? 'auto').toString().toLowerCase();
+    final isPlayStoreUrl = uri?.host == 'play.google.com' &&
+        uri!.path.startsWith('/store/apps/details');
+    final packageName =
+        isPlayStoreUrl ? uri.queryParameters['id']?.trim() ?? '' : '';
+    final shouldOpenPlayStore = isPlayStoreUrl &&
+        (openIn == 'play_store' || openIn == 'auto');
+
+    if (shouldOpenPlayStore && packageName.isNotEmpty) {
+      final marketUri = Uri(
+        scheme: 'market',
+        host: 'details',
+        queryParameters: {'id': packageName},
+      );
+      final opened = await launchUrl(
+        marketUri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (opened || !mounted) return;
+      await _launchExternalOffer(
+        'https://play.google.com/store/apps/details?id=${Uri.encodeQueryComponent(packageName)}',
+      );
+      return;
+    }
+
+    await _openGatedContent(
+      (data['offer_title'] ?? data['title'] ?? 'Offer').toString(),
+      url,
+      external: true,
+      externalLaunchMode: openIn == 'browser'
+          ? LaunchMode.inAppBrowserView
+          : LaunchMode.externalApplication,
+    );
   }
 
   Future<void> _claimDailyBonus() async {
@@ -598,10 +614,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 22),
             FadeInDown(child: _bannerCarousel()),
+            const AdMobBannerSlot(),
             const SizedBox(height: 16),
             _dailyBonusCard(),
             const SizedBox(height: 20),
-            _leaderboardPreview(),
+            _leaderboardButton(),
             const SizedBox(height: 28),
             _sectionTitle('Choose your earning lane', 'Two ways to earn more'),
             const SizedBox(height: 14),
@@ -762,139 +779,41 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       );
 
-  Widget _leaderboardPreview() => Container(
-        padding: const EdgeInsets.all(16),
-        decoration: _decoration(22),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text('Leaderboard',
-                      style: GoogleFonts.poppins(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: _deepBlue)),
-                ),
-                TextButton(
-                  onPressed: _openingLeaderboard
-                      ? null
-                      : _showAdGateAndOpenLeaderboard,
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                  ),
-                  child: _openingLeaderboard
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Text('View',
-                          style: GoogleFonts.poppins(
-                              fontWeight: FontWeight.w700, color: _blue)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (_loadingLeaderboard)
-              const Center(child: CircularProgressIndicator())
-            else if (_leaderboardError != null)
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _leaderboardError!,
-                      style: GoogleFonts.poppins(
-                        fontSize: 12,
-                        color: _deepBlue.withValues(alpha: .7),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Retry leaderboard',
-                    onPressed: _loadLeaderboard,
-                    icon: const Icon(Icons.refresh_rounded, color: _blue),
-                  ),
-                ],
-              )
-            else if (_leaderboard.isEmpty)
-              Text(
-                'No leaderboard entries yet.',
-                style: GoogleFonts.poppins(
-                  fontSize: 12,
-                  color: _deepBlue.withValues(alpha: .7),
-                ),
-              )
-            else
-              ..._leaderboard.map(
-                (entry) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 10),
-                    decoration: _whiteDecoration(14),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 28,
-                          height: 28,
-                          decoration: BoxDecoration(
-                            color: entry.rank == 1 ? accentCoral : _shadowBlue,
-                            borderRadius: BorderRadius.circular(9),
-                          ),
-                          child: Center(
-                            child: Text(
-                              '${entry.rank}',
-                              style: GoogleFonts.poppins(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                                color:
-                                    entry.rank == 1 ? Colors.white : _deepBlue,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            entry.isCurrentUser ? 'You' : entry.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.poppins(
-                              fontWeight: FontWeight.w700,
-                              color: _deepBlue,
-                            ),
-                          ),
-                        ),
-                        Text(
-                          '${entry.coinsEarned} coins',
-                          style: GoogleFonts.poppins(
-                            fontSize: 11,
+  Widget _leaderboardButton() => InkWell(
+        onTap: _userId.isEmpty ? null : _openLeaderboard,
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: _decoration(22),
+          child: Row(
+            children: [
+              _neoIcon(Icons.emoji_events_rounded, _blue, size: 48),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Leaderboard',
+                        style: GoogleFonts.poppins(
+                            fontSize: 16,
                             fontWeight: FontWeight.w700,
-                            color: accentCoral,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                            color: _deepBlue)),
+                    Text('Tap View to see the current rankings.',
+                        style: GoogleFonts.poppins(
+                            fontSize: 11, color: _deepBlue.withOpacity(.62))),
+                  ],
                 ),
               ),
-          ],
+              Text('View',
+                  style: GoogleFonts.poppins(
+                      fontWeight: FontWeight.w700, color: _blue)),
+            ],
+          ),
         ),
       );
 
-  Future<void> _showAdGateAndOpenLeaderboard() async {
-    if (_openingLeaderboard || _userId.isEmpty) return;
-    setState(() => _openingLeaderboard = true);
-    final watchedAd = await _adService.showRewardedAd();
-    if (!mounted) return;
-    setState(() => _openingLeaderboard = false);
-    if (!watchedAd) {
-      _showMessage(
-          'Watch the rewarded ad to view the leaderboard. Please try again when an ad is ready.');
-      return;
-    }
+  Future<void> _openLeaderboard() async {
+    if (_userId.isEmpty) return;
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -1049,8 +968,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<dynamic> _filteredOffers(String search) {
     return _offers.where((offer) {
       final data = offer is Map ? offer : <dynamic, dynamic>{};
+      final title = (data['offer_title'] ?? data['title'] ?? data['name'] ?? '')
+          .toString();
+      final link =
+          (data['offer_link'] ?? data['link_url'] ?? data['target_link'] ?? '')
+              .toString();
+      if (title.trim().isEmpty || link.trim().isEmpty) return false;
       final searchable = [
-        data['offer_title'],
+        title,
         data['offer_description'],
         data['offer_type'],
       ].join(' ').toLowerCase();
@@ -1068,20 +993,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _offerCard(dynamic offer) {
     final data = offer is Map ? offer : <dynamic, dynamic>{};
-    final title = (data['offer_title'] ??
-            data['title'] ??
-            data['name'] ??
-            'New app offer')
-        .toString();
-    final description = (data['offer_description'] ??
-            data['description'] ??
-            'Complete this task and earn coins.')
-        .toString();
+    final title =
+        (data['offer_title'] ?? data['title'] ?? data['name'] ?? '').toString();
+    final description =
+        (data['offer_description'] ?? data['description'] ?? '').toString();
     final coins = data['offer_virtual_currency'] ??
         data['coins'] ??
         data['reward'] ??
         data['payout'] ??
-        0;
+        '';
     final iconUrl = (data['offer_image'] ??
             data['icon'] ??
             data['icon_url'] ??
@@ -1121,13 +1041,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         fontSize: 11, color: _deepBlue.withOpacity(.62))),
               ])),
           const SizedBox(width: 8),
-          Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                  color: _blue, borderRadius: BorderRadius.circular(13)),
-              child: Text('+$coins',
-                  style: GoogleFonts.poppins(
-                      color: Colors.white, fontWeight: FontWeight.w700))),
+          if (coins.toString().isNotEmpty)
+            Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                    color: _blue, borderRadius: BorderRadius.circular(13)),
+                child: Text('+$coins',
+                    style: GoogleFonts.poppins(
+                        color: Colors.white, fontWeight: FontWeight.w700))),
         ]),
       ),
     );
@@ -1139,7 +1061,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _openOfferDetails(Map<dynamic, dynamic> data) {
-    final url = (data['offer_link'] ?? '').toString();
+    final url =
+        (data['offer_link'] ?? data['link_url'] ?? data['target_link'] ?? '')
+            .toString();
     if (url.isEmpty) {
       _showMessage('This offer is temporarily unavailable.');
       return;
@@ -1149,9 +1073,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       MaterialPageRoute(
         builder: (_) => OfferDetailScreen(
           offer: data,
-          onStartTask: () => _openGatedContent(
-              (data['offer_title'] ?? 'Offer').toString(), url,
-              external: true),
+          onStartTask: () => _startOfferTask(data),
         ),
       ),
     );
@@ -1185,7 +1107,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _neoIcon(Icons.refresh_rounded, _blue, size: 48),
           const SizedBox(width: 14),
           Expanded(
-              child: Text('New offers are loading. Pull to refresh shortly.',
+              child: Text('No offers are available right now.',
                   style:
                       GoogleFonts.poppins(color: _deepBlue.withOpacity(.7)))),
         ]),
@@ -1194,7 +1116,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _emptySearchCard() => Container(
         padding: const EdgeInsets.all(22),
         decoration: _whiteDecoration(18),
-        child: Text('No AdMantum offers match your search.',
+        child: Text('No offers match your search.',
             style: GoogleFonts.poppins(color: _deepBlue.withOpacity(.7))),
       );
 
@@ -1321,6 +1243,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 _bannerCarousel(),
                 const SizedBox(height: 16),
               ],
+              const AdMobBannerSlot(),
               _offerSearchField(),
               const SizedBox(height: 14),
               _offerCategoryFilters(),
@@ -1816,8 +1739,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         'Offers', '$_offersCompleted', Icons.task_alt_rounded)),
                 const SizedBox(width: 12),
                 Expanded(
-                    child: _profileStat('Referrals', '$_referralCount',
-                        Icons.people_alt_rounded)),
+                    child: _profileStat('Redeemed', '$_totalRedeemed',
+                        Icons.card_giftcard_rounded)),
               ],
             ),
             const SizedBox(height: 22),
@@ -1852,6 +1775,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
             const SizedBox(height: 12),
             _profileAction(Icons.star_outline_rounded, 'Rate us',
                 'Open RewardBrick in your app store.', _rateApp),
+            const SizedBox(height: 12),
+            _profileAction(
+                Icons.notifications_active_outlined,
+                'Enable notifications',
+                'Choose whether RewardBrick can send you updates.', () async {
+              final enabled = await NotificationService.requestPermission();
+              if (mounted) {
+                _showMessage(enabled
+                    ? 'Notifications enabled.'
+                    : 'Notifications are unavailable or permission was not granted.');
+              }
+            }),
             const SizedBox(height: 12),
             _profileAction(
                 Icons.delete_outline_rounded,

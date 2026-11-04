@@ -24,7 +24,8 @@ void main() {
     expect(find.byType(Image), findsOneWidget);
   });
 
-  testWidgets('dashboard home tab shows earning categories and leaderboard',
+  testWidgets(
+      'dashboard home tab shows earning categories and a leaderboard entry point',
       (tester) async {
     await tester.pumpWidget(const MaterialApp(home: DashboardScreen()));
     await tester.pump(const Duration(milliseconds: 300));
@@ -32,6 +33,7 @@ void main() {
     expect(find.text('Choose your earning lane'), findsOneWidget);
     expect(find.text('Leaderboard'), findsOneWidget);
     expect(find.text('View'), findsWidgets);
+    expect(find.text('Tap View to see the current rankings.'), findsOneWidget);
     expect(find.text('Susanth Founder'), findsNothing);
     expect(find.text('Playtime'), findsNothing);
 

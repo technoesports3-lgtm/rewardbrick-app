@@ -23,17 +23,19 @@ class OfferDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final title = _value('offer_title', 'AdMantum offer');
-    final description = _value(
-        'offer_description', 'Complete the task below to earn your reward.');
+    final title = _value('offer_title', 'Offer');
+    final description = _value('offer_description');
     final imageUrl = _value('offer_image');
-    final reward = _value('offer_virtual_currency', '0');
+    final reward = _value('offer_virtual_currency');
     final type = _value('offer_type', 'Task').toUpperCase();
     final instructions = offer['offer_instructions'] is List
         ? (offer['offer_instructions'] as List)
             .map((instruction) => instruction.toString())
+            .where((instruction) => instruction.trim().isNotEmpty)
             .toList()
-        : <String>[description];
+        : description.trim().isEmpty
+            ? <String>[]
+            : <String>[description];
 
     return Scaffold(
       backgroundColor: _background,
@@ -74,16 +76,17 @@ class OfferDetailScreen extends StatelessWidget {
                       Text('Total reward',
                           style: GoogleFonts.poppins(
                               color: _terracotta, fontSize: 12)),
-                      Row(children: [
-                        const Icon(Icons.monetization_on_rounded,
-                            color: Color(0xFFE0A91F), size: 21),
-                        const SizedBox(width: 5),
-                        Text(reward,
-                            style: GoogleFonts.poppins(
-                                color: _terracotta,
-                                fontWeight: FontWeight.w800,
-                                fontSize: 17)),
-                      ]),
+                      if (reward.isNotEmpty)
+                        Row(children: [
+                          const Icon(Icons.monetization_on_rounded,
+                              color: Color(0xFFE0A91F), size: 21),
+                          const SizedBox(width: 5),
+                          Text(reward,
+                              style: GoogleFonts.poppins(
+                                  color: _terracotta,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 17)),
+                        ]),
                     ],
                   ),
                 ),
@@ -91,7 +94,13 @@ class OfferDetailScreen extends StatelessWidget {
                 Row(children: [
                   _metaPill(Icons.bolt_rounded, type),
                   const SizedBox(width: 8),
-                  _metaPill(Icons.timer_outlined, 'Quick task'),
+                  if (_value('time_required').isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    _metaPill(
+                      Icons.timer_outlined,
+                      '${_value('time_required')} min',
+                    ),
+                  ],
                 ]),
               ],
             ),
@@ -102,18 +111,17 @@ class OfferDetailScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Complete registration',
-                    style: GoogleFonts.poppins(
-                        color: _terracotta,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 15)),
-                const SizedBox(height: 8),
-                ...instructions.asMap().entries.map((entry) => Padding(
-                      padding: const EdgeInsets.only(bottom: 5),
-                      child: Text('${entry.key + 1}. ${entry.value}',
-                          style: GoogleFonts.poppins(
-                              color: _terracotta, fontSize: 12, height: 1.3)),
-                    )),
+                if (instructions.isEmpty)
+                  Text('No additional instructions provided by the partner.',
+                      style: GoogleFonts.poppins(
+                          color: _terracotta, fontSize: 12, height: 1.3))
+                else
+                  ...instructions.asMap().entries.map((entry) => Padding(
+                        padding: const EdgeInsets.only(bottom: 5),
+                        child: Text('${entry.key + 1}. ${entry.value}',
+                            style: GoogleFonts.poppins(
+                                color: _terracotta, fontSize: 12, height: 1.3)),
+                      )),
               ],
             ),
           ),

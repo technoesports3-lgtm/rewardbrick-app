@@ -19,11 +19,21 @@ class AdService {
     defaultValue: _testAdUnitId,
   );
 
+  static const String _testBannerAdUnitId =
+      'ca-app-pub-3940256099942544/6300978111';
+  static const String _bannerAdUnitId = String.fromEnvironment(
+    'ADMOB_BANNER_AD_UNIT_ID',
+    defaultValue: _testBannerAdUnitId,
+  );
+
+  static Future<void> initialize() {
+    return _adsInitialization ??= MobileAds.instance.initialize().then((_) {});
+  }
+
   void loadAd() {
     if (_isAdLoaded || _isAdLoading) return;
     _isAdLoading = true;
-    (_adsInitialization ??= MobileAds.instance.initialize().then((_) {}))
-        .then((_) {
+    initialize().then((_) {
       RewardedAd.load(
         adUnitId: _adUnitId,
         request: const AdRequest(),
@@ -136,5 +146,62 @@ class AdService {
       debugPrint('User earned the rewarded ad reward.');
       onRewardEarned();
     });
+  }
+}
+
+class AdMobBannerSlot extends StatefulWidget {
+  const AdMobBannerSlot({super.key});
+
+  @override
+  State<AdMobBannerSlot> createState() => _AdMobBannerSlotState();
+}
+
+class _AdMobBannerSlotState extends State<AdMobBannerSlot> {
+  late final BannerAd _banner;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _banner = BannerAd(
+      adUnitId: AdService._bannerAdUnitId,
+      size: AdSize.banner,
+      request: const AdRequest(),
+      listener: BannerAdListener(
+        onAdLoaded: (_) {
+          if (mounted) setState(() => _loaded = true);
+        },
+        onAdFailedToLoad: (ad, error) {
+          debugPrint('Google banner ad failed to load: ${error.message}');
+          ad.dispose();
+        },
+      ),
+    );
+    AdService.initialize().then<void>((_) {
+      if (mounted) _banner.load();
+    }).catchError((Object error) {
+      debugPrint('Google Mobile Ads banner initialization failed: $error');
+    });
+  }
+
+  @override
+  void dispose() {
+    _banner.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_loaded) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Center(
+        child: SizedBox(
+          width: AdSize.banner.width.toDouble(),
+          height: AdSize.banner.height.toDouble(),
+          child: AdWidget(ad: _banner),
+        ),
+      ),
+    );
   }
 }

@@ -9,10 +9,10 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         
-        <!-- 🔥 AdMob App ID (Test ID) -->
+        <!-- Configure the production AdMob App ID through ADMOB_APP_ID at build time. -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713"/>
+            android:value="${adMobAppId}"/>
 
         <activity
             android:name=".MainActivity"
