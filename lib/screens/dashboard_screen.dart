@@ -105,7 +105,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final userId = prefs.getString('user_id') ?? '';
     if (!mounted) return;
     setState(() => _userId = userId);
-    unawaited(NotificationService.initializeForUser(userId));
     if (userId.isEmpty) {
       setState(() {
         _loadingProfile = false;
@@ -113,6 +112,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       });
       return;
     }
+    unawaited(NotificationService.registerAndRequestPermission(userId));
     await Future.wait([
       _loadProfile(userId),
       _loadOffers(userId),
@@ -517,8 +517,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         uri!.path.startsWith('/store/apps/details');
     final packageName =
         isPlayStoreUrl ? uri.queryParameters['id']?.trim() ?? '' : '';
-    final shouldOpenPlayStore = isPlayStoreUrl &&
-        (openIn == 'play_store' || openIn == 'auto');
+    final shouldOpenPlayStore =
+        isPlayStoreUrl && (openIn == 'play_store' || openIn == 'auto');
 
     if (shouldOpenPlayStore && packageName.isNotEmpty) {
       final marketUri = Uri(
