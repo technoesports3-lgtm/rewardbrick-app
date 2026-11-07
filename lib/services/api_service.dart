@@ -434,12 +434,93 @@ class ApiService {
     throw const ApiRequestException('Could not load transaction history.');
   }
 
-  // 6. Claim daily bonus
-  Future<Response?> claimDailyBonus(String userId) async {
+  Future<Map<String, dynamic>> getWalletActivity(
+    String userId, {
+    int limit = 30,
+    int offset = 0,
+  }) async {
     try {
-      return await _dio.post('/users/daily-bonus', data: {"userId": userId});
-    } catch (e) {
-      return null;
+      final response = await _dio.get(
+        '/users/activity/$userId',
+        queryParameters: {'limit': limit, 'offset': offset},
+      );
+      final data = response.data;
+      if (response.statusCode == 200 &&
+          data is Map &&
+          data['activity'] is List &&
+          data['has_more'] is bool) {
+        return {
+          'activity': List<dynamic>.from(data['activity'] as List),
+          'has_more': data['has_more'] as bool,
+        };
+      }
+      throw ApiRequestException(
+        data is Map && data['message'] is String
+            ? data['message'] as String
+            : 'Could not load wallet activity.',
+      );
+    } on DioException catch (error) {
+      throw ApiRequestException(
+        error.response?.data is Map && error.response?.data['message'] is String
+            ? error.response!.data['message'] as String
+            : 'Could not load wallet activity. Please try again.',
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> startDailyBonusSession(String userId) async {
+    try {
+      final response = await _dio.post(
+        '/users/daily-bonus/session',
+        data: {'userId': userId},
+      );
+      final data = response.data;
+      if (response.statusCode == 200 &&
+          data is Map &&
+          data['session_id'] is String) {
+        return Map<String, dynamic>.from(data);
+      }
+      throw ApiRequestException(
+        data is Map && data['message'] is String
+            ? data['message'] as String
+            : 'Could not start the daily bonus.',
+      );
+    } on DioException catch (error) {
+      throw ApiRequestException(
+        error.response?.data is Map && error.response?.data['message'] is String
+            ? error.response!.data['message'] as String
+            : 'Could not start the daily bonus. Please try again.',
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> getDailyBonusSession(
+    String userId,
+    String sessionId,
+  ) async {
+    try {
+      final response = await _dio.get(
+        '/users/daily-bonus/session/$sessionId',
+        queryParameters: {'userId': userId},
+      );
+      final data = response.data;
+      if (response.statusCode == 200 &&
+          data is Map &&
+          data['verified_ads'] is num &&
+          data['claimed'] is bool) {
+        return Map<String, dynamic>.from(data);
+      }
+      throw ApiRequestException(
+        data is Map && data['message'] is String
+            ? data['message'] as String
+            : 'Could not check the daily bonus status.',
+      );
+    } on DioException catch (error) {
+      throw ApiRequestException(
+        error.response?.data is Map && error.response?.data['message'] is String
+            ? error.response!.data['message'] as String
+            : 'Could not check the daily bonus status. Please try again.',
+      );
     }
   }
 }

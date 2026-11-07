@@ -18,6 +18,7 @@ import 'auth_screen.dart';
 import 'content_webview_screen.dart';
 import 'leaderboard_screen.dart';
 import 'offer_detail_screen.dart';
+import 'wallet_activity_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -46,6 +47,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   num _totalRedeemed = 0;
   num _balance = 0;
   bool _loadingProfile = true;
+  bool _hasCachedProfile = false;
   bool _dailyLoading = false;
   bool _withdrawalLoading = false;
   bool _loadingWalletHistory = false;
@@ -104,7 +106,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final prefs = await SharedPreferences.getInstance();
     final userId = prefs.getString('user_id') ?? '';
     if (!mounted) return;
-    setState(() => _userId = userId);
+    final cachedName = prefs.getString('profile_name');
+    final hasCachedProfile = cachedName != null && cachedName.isNotEmpty;
+    setState(() {
+      _userId = userId;
+      _hasCachedProfile = hasCachedProfile;
+      if (hasCachedProfile) {
+        _userName = cachedName;
+        _balance = num.tryParse(prefs.getString('profile_balance') ?? '') ?? 0;
+        _totalEarned =
+            num.tryParse(prefs.getString('profile_total_earned') ?? '') ?? 0;
+        _offersCompleted =
+            num.tryParse(prefs.getString('profile_offers_completed') ?? '') ??
+                0;
+        _totalRedeemed =
+            num.tryParse(prefs.getString('profile_total_redeemed') ?? '') ?? 0;
+        _loadingProfile = false;
+      }
+    });
     if (userId.isEmpty) {
       setState(() {
         _loadingProfile = false;
@@ -168,7 +187,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _numberValue(user['coins_redeemed'] ?? stats['coins_redeemed']);
         _loadingProfile = false;
         _profileError = null;
+        _hasCachedProfile = true;
       });
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await Future.wait([
+          prefs.setString('profile_name', _userName),
+          prefs.setString('profile_balance', '$_balance'),
+          prefs.setString('profile_total_earned', '$_totalEarned'),
+          prefs.setString('profile_offers_completed', '$_offersCompleted'),
+          prefs.setString('profile_total_redeemed', '$_totalRedeemed'),
+        ]);
+      } catch (error) {
+        debugPrint('Profile details could not be cached: $error');
+      }
     } on ApiRequestException catch (error) {
       if (!mounted) return;
       setState(() {
@@ -550,26 +582,63 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _claimDailyBonus() async {
     if (_userId.isEmpty || _dailyLoading) return;
     setState(() => _dailyLoading = true);
-    final watchedAd = await _adService.showRewardedAd();
-    if (!mounted) return;
-    if (!watchedAd) {
-      setState(() => _dailyLoading = false);
-      _showMessage(
-          'Watch the rewarded ad to claim your daily bonus. Please try again when an ad is ready.');
-      return;
-    }
+    try {
+      final session = await _api.startDailyBonusSession(_userId);
+      final sessionId = session['session_id'] as String;
+      final verifiedAds = _numberValue(session['verified_ads']).toInt();
+      final prefs = await SharedPreferences.getInstance();
+      const pendingSessionKey = 'daily_bonus_pending_session';
+      const localAdsKey = 'daily_bonus_local_ads';
+      final sameSession = prefs.getString(pendingSessionKey) == sessionId;
+      var localAds = sameSession ? prefs.getInt(localAdsKey) ?? 0 : 0;
+      if (!sameSession) {
+        await prefs.setString(pendingSessionKey, sessionId);
+        await prefs.setInt(localAdsKey, 0);
+      }
+      final remainingAds =
+          (3 - (verifiedAds > localAds ? verifiedAds : localAds)).clamp(0, 3);
 
-    final response = await _api.claimDailyBonus(_userId);
-    if (!mounted) return;
-    setState(() => _dailyLoading = false);
-    final message = response?.data is Map && response?.data['message'] != null
-        ? response!.data['message'].toString()
-        : response?.statusCode == 200
-            ? 'Daily bonus claimed.'
-            : 'The daily bonus is not available yet.';
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
-    if (response?.statusCode == 200) _loadProfile();
+      for (var index = 0; index < remainingAds; index++) {
+        final watchedAd = await _adService.showRewardedAd(
+          userId: _userId,
+          customData: sessionId,
+        );
+        if (!mounted) return;
+        if (!watchedAd) {
+          _showMessage(
+              'A rewarded ad was not completed. Your verified progress is saved.');
+          return;
+        }
+        localAds++;
+        await prefs.setInt(localAdsKey, localAds);
+      }
+
+      for (var attempt = 0; attempt < 15; attempt++) {
+        final status = await _api.getDailyBonusSession(_userId, sessionId);
+        if (!mounted) return;
+        if (status['claimed'] == true) {
+          await prefs.remove(pendingSessionKey);
+          await prefs.remove(localAdsKey);
+          _showMessage('Daily bonus claimed: 5 coins (₹0.50).');
+          await Future.wait([
+            _loadProfile(),
+            if (_walletHistoryRequested) _loadWalletHistory(),
+          ]);
+          return;
+        }
+        await Future<void>.delayed(const Duration(seconds: 2));
+      }
+      _showMessage(
+        'Your ads were watched. The server is verifying them; check your wallet again shortly.',
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(error is ApiRequestException
+          ? error.message
+          : 'The daily bonus could not be completed. Please try again.');
+    } finally {
+      if (mounted) setState(() => _dailyLoading = false);
+    }
   }
 
   @override
@@ -661,12 +730,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       fontSize: 10,
                       color: _deepBlue.withOpacity(.62),
                       fontWeight: FontWeight.w600)),
-              Text('$_balance',
-                  style: GoogleFonts.poppins(
-                      height: 1.1,
-                      color: _deepBlue,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800)),
+              _loadingProfile
+                  ? _loadingBlock(38, 17)
+                  : Text('$_balance',
+                      style: GoogleFonts.poppins(
+                          height: 1.1,
+                          color: _deepBlue,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800)),
             ],
           ),
         ]),
@@ -674,9 +745,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _bannerCarousel() {
     if (!_dashboardBannersLoaded) {
-      return const SizedBox(
+      return Container(
         height: 148,
-        child: Center(child: CircularProgressIndicator()),
+        padding: const EdgeInsets.all(22),
+        decoration: _whiteDecoration(22),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _loadingBlock(132, 16),
+            const SizedBox(height: 12),
+            _loadingBlock(210, 12),
+            const SizedBox(height: 16),
+            _loadingBlock(72, 10),
+          ],
+        ),
       );
     }
     if (_dashboardBannersError != null) {
@@ -754,7 +837,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   Text('Daily bonus',
                       style: GoogleFonts.poppins(
                           fontWeight: FontWeight.w700, color: _deepBlue)),
-                  Text('Watch a short ad to claim your daily bonus.',
+                  Text('Watch 3 ads for 5 coins (₹0.50).',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.poppins(
@@ -934,10 +1017,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         valueListenable: _offerSearch,
         builder: (context, search, _) {
           if (_loadingOffers) {
-            return const Center(
-                child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: CircularProgressIndicator()));
+            return Column(
+              children: List.generate(2, (_) => _offerLoadingCard()),
+            );
           }
           if (_offersError != null) {
             return Center(
@@ -1120,7 +1202,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             style: GoogleFonts.poppins(color: _deepBlue.withOpacity(.7))),
       );
 
-  Widget _greeting() => _profileError == null
+  Widget _greeting() => _profileError == null || _hasCachedProfile
       ? Row(
           children: [
             Image.asset(
@@ -1163,6 +1245,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
         decoration: _decoration(14),
       );
 
+  Widget _loadingBlock(double width, double height) => Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: primaryLightBlue.withOpacity(.48),
+          borderRadius: BorderRadius.circular(height / 2),
+        ),
+      );
+
+  Widget _offerLoadingCard() => Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(14),
+        decoration: _whiteDecoration(18),
+        child: Row(
+          children: [
+            _loadingBlock(64, 64),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _loadingBlock(150, 14),
+                  const SizedBox(height: 10),
+                  _loadingBlock(170, 10),
+                  const SizedBox(height: 12),
+                  _loadingBlock(82, 11),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+
   Widget _balancePanel() => Container(
         padding: const EdgeInsets.all(22),
         decoration: _decoration(24),
@@ -1176,11 +1291,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Text('Wallet balance',
                     style: GoogleFonts.poppins(
                         fontSize: 13, color: _deepBlue.withOpacity(.65))),
-                Text('$_balance coins',
-                    style: GoogleFonts.poppins(
-                        fontSize: 26,
-                        fontWeight: FontWeight.w700,
-                        color: _deepBlue)),
+                _loadingProfile
+                    ? _loadingBlock(112, 28)
+                    : Text('$_balance coins',
+                        style: GoogleFonts.poppins(
+                            fontSize: 26,
+                            fontWeight: FontWeight.w700,
+                            color: _deepBlue)),
               ],
             ),
           ],
@@ -1428,6 +1545,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
     await _loadWalletHistory();
   }
 
+  Future<void> _openAllWalletActivity() async {
+    if (_userId.isEmpty) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => WalletActivityScreen(api: _api, userId: _userId),
+      ),
+    );
+    if (mounted && _walletHistoryRequested) {
+      await _loadWalletHistory();
+    }
+  }
+
   Widget _walletHistorySection() => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1435,9 +1564,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text('Recent activity', style: _headingStyle()),
-              IconButton(
-                  onPressed: _loadingWalletHistory ? null : _loadWalletHistory,
-                  icon: const Icon(Icons.refresh_rounded)),
+              Row(
+                children: [
+                  TextButton(
+                    onPressed: _openAllWalletActivity,
+                    child: const Text('View all'),
+                  ),
+                  IconButton(
+                    onPressed:
+                        _loadingWalletHistory ? null : _loadWalletHistory,
+                    icon: const Icon(Icons.refresh_rounded),
+                  ),
+                ],
+              ),
             ],
           ),
           if (_loadingWalletHistory)

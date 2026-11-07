@@ -308,6 +308,16 @@ Response: {
 }
 ```
 
+#### Paged wallet activity
+```
+GET /api/v1/users/activity/:userId?limit=30&offset=0
+Response: {
+  status: "success",
+  activity: [{ activity_type, activity_id, created_at, amount_coins, title, status, voucher_reference }],
+  has_more: Boolean
+}
+```
+
 #### 10. Get Withdrawal Options
 ```
 GET /api/v1/withdrawals/options
@@ -402,19 +412,21 @@ Response: {
 
 ### Daily Bonus & Rewards
 
-#### 14. Claim Daily Bonus
+#### 14. Start a server-verified Daily Bonus session
 ```
-POST /api/v1/users/daily-bonus
+POST /api/v1/users/daily-bonus/session
 Headers: { Authorization: Bearer TOKEN }
 Body: { userId: String }
 Response: {
-  success: Boolean,
-  message: String,
-  bonus_amount: Number,
-  new_balance: Number,
-  next_bonus_available: Date
+  status: "success",
+  session_id: String,
+  verified_ads: Number,
+  required_ads: 3,
+  reward_coins: 5
 }
 ```
+
+The app must set this session ID as AdMob SSV custom data and the user's ID as SSV user data. The backend credits 5 coins only after three unique, signature-verified callbacks to `/api/v1/tasks/admob-ssv`; never credit a client-side ad callback.
 
 #### 22. Get Leaderboard
 ```
@@ -438,9 +450,11 @@ Response: {
 Ranks use lifetime positive coin credits from the transaction ledger. Responses include display names only, never email addresses.
 
 ### Coin Reward Conversion
-- 100 coins = ₹1.
-- A successful AdMantum task credits 4,000 coins (₹40) to the user.
-- Do not credit the provider's USD payout directly as user coins.
+- 10 coins = ₹1.
+- Offerwall provider reward settings represent the gross payout basis converted to coins; credit only 25% of that basis to the user (round down), retaining 75% for the business.
+- The default AdMantum gross basis is 400 coins (₹40); a verified completion credits 100 coins (₹10) to the user.
+- The daily bonus is 5 coins (₹0.50) and is credited only after three AdMob server-side verification callbacks.
+- Do not credit a provider's raw USD payout directly as user coins.
 
 ---
 

@@ -11,6 +11,7 @@ class AdService {
   bool _isAdLoading = false;
   bool _isShowingRewardedAd = false;
   bool _rewardGranted = false;
+  Completer<bool>? _adLoadCompleter;
 
   // Use the Google test ID until a production ID is supplied at build time.
   static const String _testAdUnitId = 'ca-app-pub-3940256099942544/5224354917';
@@ -33,6 +34,8 @@ class AdService {
   void loadAd() {
     if (_isAdLoaded || _isAdLoading) return;
     _isAdLoading = true;
+    final loadCompleter = Completer<bool>();
+    _adLoadCompleter = loadCompleter;
     initialize().then((_) {
       RewardedAd.load(
         adUnitId: _adUnitId,
@@ -43,12 +46,14 @@ class AdService {
             _rewardedAd?.dispose();
             _rewardedAd = ad;
             _isAdLoaded = true;
+            _completeAdLoad(true);
             debugPrint('Rewarded ad loaded.');
           },
           onAdFailedToLoad: (err) {
             _isAdLoading = false;
             _rewardedAd = null;
             _isAdLoaded = false;
+            _completeAdLoad(false);
             debugPrint('Rewarded ad failed to load: ${err.message}');
           },
         ),
@@ -56,23 +61,44 @@ class AdService {
     }).catchError((Object error) {
       _isAdLoading = false;
       _adsInitialization = null;
+      _completeAdLoad(false);
       debugPrint('Google Mobile Ads could not initialize: $error');
     });
   }
 
-  Future<bool> showRewardedAd() async {
+  void _completeAdLoad(bool loaded) {
+    final completer = _adLoadCompleter;
+    _adLoadCompleter = null;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(loaded);
+    }
+  }
+
+  Future<bool> showRewardedAd({
+    required String userId,
+    required String customData,
+  }) async {
     if (_isShowingRewardedAd) return false;
+    _isShowingRewardedAd = true;
+
+    if (!_isAdLoaded) {
+      loadAd();
+      try {
+        await _adLoadCompleter?.future.timeout(const Duration(seconds: 20));
+      } on TimeoutException {
+        debugPrint('Timed out waiting for a rewarded ad.');
+      }
+    }
 
     final ad = _rewardedAd;
     if (!_isAdLoaded || ad == null) {
       debugPrint('Rewarded ad is not ready.');
-      loadAd();
+      _isShowingRewardedAd = false;
       return false;
     }
 
     _rewardedAd = null;
     _isAdLoaded = false;
-    _isShowingRewardedAd = true;
     var rewardGranted = false;
     final result = Completer<bool>();
 
@@ -97,6 +123,12 @@ class AdService {
     );
 
     try {
+      await ad.setServerSideOptions(
+        ServerSideVerificationOptions(
+          userId: userId,
+          customData: customData,
+        ),
+      );
       await ad.show(
         onUserEarnedReward: (AdWithoutView ad, RewardItem reward) {
           rewardGranted = true;

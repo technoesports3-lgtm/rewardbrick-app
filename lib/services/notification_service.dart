@@ -25,7 +25,9 @@ class NotificationService {
         );
         final data = response.data;
         final appId = data is Map ? data['app_id'] : null;
-        return appId is String && appId.isNotEmpty ? appId : null;
+        if (appId is String && appId.isNotEmpty) return appId;
+        _appIdLookup = null;
+        return null;
       } catch (error) {
         debugPrint('OneSignal app configuration could not be loaded: $error');
         _appIdLookup = null;
@@ -80,8 +82,8 @@ class NotificationService {
     const promptedKey = 'onesignal_permission_prompted';
     if (preferences.getBool(promptedKey) ?? false) return;
 
-    await preferences.setBool(promptedKey, true);
-    await requestPermission();
+    final granted = await requestPermission();
+    if (granted) await preferences.setBool(promptedKey, true);
   }
 
   static Future<void> logout() async {

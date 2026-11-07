@@ -99,12 +99,15 @@ Button(
 8. `POST /users/withdraw` - Request withdrawal
 
 ### Should Have (Priority 2)
-9. `GET /wallet/transaction-history/:userId` - See history
+9. `GET /users/activity/:userId?limit=30&offset=0` - Paged wallet history
 10. `GET /withdrawals/history/:userId` - Withdrawal status
-11. `POST /users/daily-bonus` - Daily reward
-12. `GET /offers/categories` - Category list
-13. `GET /withdrawals/options` - Available methods
-14. `GET /withdrawals/pending/:userId` - Pending requests
+11. `POST /users/daily-bonus/session` - Start a daily reward session
+12. `GET /users/daily-bonus/session/:sessionId?userId=...` - Check verified ad progress
+13. `GET /offers/categories` - Category list
+14. `GET /withdrawals/options` - Available methods
+15. `GET /withdrawals/pending/:userId` - Pending requests
+
+AdMob SSV callbacks are handled at `/tasks/admob-ssv`; wallet credits are made by the backend only after three verified daily-bonus ad callbacks.
 
 ### Nice to Have (Priority 3)
 15. `GET /surveys/list` - Available surveys
