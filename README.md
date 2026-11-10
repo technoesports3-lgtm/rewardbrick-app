@@ -7,6 +7,17 @@
 - **Offer links:** Admin-managed tasks can use auto-detection, force Google Play Store, or force browser routing. Play Store URLs open the Play Store app when available and fall back to the HTTPS listing.
 - **Images:** Upload poster/task/affiliate images from the backend admin panel to Cloudinary; the backend signs uploads and never exposes the Cloudinary API secret.
 
-For an Android release, set `ADMOB_APP_ID` in the build environment and pass `--dart-define=ADMOB_REWARDED_AD_UNIT_ID=<id>` and `--dart-define=ADMOB_BANNER_AD_UNIT_ID=<id>` to `flutter build appbundle`. Passing the OneSignal App ID is optional because the app can load it from the backend.
+The Android and iOS launcher icons use the RewardBrick logo in `assets/illustrations/rewardbrick_logo.png`.
+
+For a Play Store release, create and protect your upload keystore, then put its local-only values in `android/key.properties` (that file and keystore files are git-ignored). `storeFile` is relative to the `android` directory (for example, `app/upload-keystore.jks`):
+
+```properties
+storePassword=<keystore-password>
+keyPassword=<key-password>
+keyAlias=<key-alias>
+storeFile=<path-relative-to-android-directory>
+```
+
+Set `ADMOB_APP_ID` in the build environment and pass `--dart-define=ADMOB_REWARDED_AD_UNIT_ID=<id>` and `--dart-define=ADMOB_BANNER_AD_UNIT_ID=<id>` to `flutter build appbundle`. Release builds use the upload key from `android/key.properties`; do not publish a debug-signed build. Passing the OneSignal App ID is optional because the app can load it from the backend.
 
 The backend integration variables and admin setup are documented in the backend's `ADMIN_PANEL.md`.
